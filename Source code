@@ -1,0 +1,133 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+import seaborn as sns
+import os
+from datetime import datetime
+import warnings
+from sklearn.preprocessing import MinMaxScaler
+
+warnings.filterwarnings("ignore")
+
+# Load data
+file_path = 'mock_stock_data (1).csv'
+try:
+    data = pd.read_csv(file_path, delimiter=',', on_bad_lines='skip')
+    print("Data loaded successfully:", data.shape)
+except Exception as e:
+    print("Error loading file:", e)
+
+# Check required columns
+required_columns = ['date', 'Name', 'open', 'close', 'volume']
+missing = [col for col in required_columns if col not in data.columns]
+if missing:
+    raise ValueError(f"Missing columns in data: {missing}")
+
+# Convert 'date' column
+data['date'] = pd.to_datetime(data['date'], errors='coerce')
+data = data.dropna(subset=['date'])  # Drop rows where 'date' conversion failed
+
+# Plot open and close prices
+companies = ['AAPL', 'AMD', 'FB', 'GOOGL', 'AMZN', 'NVDA', 'EBAY', 'CSCO', 'IBM']
+
+plt.figure(figsize=(15, 8))
+for index, company in enumerate(companies, 1):
+    plt.subplot(3, 3, index)
+    c = data[data['Name'] == company]
+    plt.plot(c['date'], c['close'], color="red", label="Close", marker="+")
+    plt.plot(c['date'], c['open'], color="green", label="Open", marker="^")
+    plt.title(company)
+    plt.legend()
+plt.tight_layout()
+
+# Plot volume
+plt.figure(figsize=(15, 8))
+for index, company in enumerate(companies, 1):
+    plt.subplot(3, 3, index)
+    c = data[data['Name'] == company]
+    plt.plot(c['date'], c['volume'], color='purple', marker='*')
+    plt.title(f"{company} Volume")
+plt.tight_layout()
+
+# Apple stock
+apple = data[data['Name'] == 'AAPL'].sort_values('date')
+plt.figure(figsize=(10, 6))
+plt.plot(apple['date'], apple['close'])
+plt.xlabel("Date")
+plt.ylabel("Close")
+plt.title("Apple Stock Prices")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Prepare data
+close_data = apple[['close']]
+dataset = close_data.values
+training = int(np.ceil(len(dataset) * 0.95))
+print("Training data length:", training)
+
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(dataset)
+
+train_data = scaled_data[0:training, :]
+x_train, y_train = [], []
+for i in range(60, len(train_data)):
+    x_train.append(train_data[i-60:i, 0])
+    y_train.append(train_data[i, 0])
+
+x_train, y_train = np.array(x_train), np.array(y_train)
+x_train = x_train.reshape((x_train.shape[0], x_train.shape[1], 1))
+
+# Model
+model = keras.models.Sequential([
+    keras.layers.LSTM(64, return_sequences=True, input_shape=(x_train.shape[1], 1)),
+    keras.layers.LSTM(64),
+    keras.layers.Dense(32),
+    keras.layers.Dropout(0.5),
+    keras.layers.Dense(1)
+])
+model.compile(optimizer='adam', loss='mean_squared_error')
+model.summary()
+
+history = model.fit(x_train, y_train, epochs=10)
+
+# Test data
+test_data = scaled_data[training - 60:, :]
+x_test = []
+y_test = dataset[training:, :]  # shape (n, 1)
+
+for i in range(60, len(test_data)):
+    x_test.append(test_data[i-60:i, 0])
+x_test = np.array(x_test).reshape(-1, 60, 1)
+
+predictions = model.predict(x_test)
+predictions = scaler.inverse_transform(predictions)
+
+# Evaluation
+if len(predictions) == len(y_test):
+    mse = np.mean((predictions - y_test) ** 2)
+    rmse = np.sqrt(mse)
+    print("MSE:", mse)
+    print("RMSE:", rmse)
+else:
+    print("Prediction and actual shapes don't match. Check preprocessing steps.")
+    print(f"Predictions: {predictions.shape}, y_test: {y_test.shape}")
+
+# Visualize predictions
+train = apple[:training]
+test = apple[training:].copy()
+test.loc[:, 'Predictions'] = predictions  # Avoid SettingWithCopyWarning
+
+plt.figure(figsize=(12, 8))
+plt.plot(train['date'], train['close'], label='Train')
+plt.plot(test['date'], test['close'], label='Test')
+plt.plot(test['date'], test['Predictions'], label='Predictions')
+plt.title('Apple Stock Close Price Prediction')
+plt.xlabel('Date')
+plt.ylabel('Close Price')
+plt.legend()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
